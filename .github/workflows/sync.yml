@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    
+
     # CRITICAL FIX: Explicitly grant token generation permissions to the execution runner
     permissions:
       contents: read
@@ -30,16 +30,37 @@ jobs:
 
       - name: Fetch Latest Supabase CLI Release Info
         id: get_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPABASE_REPO: supabase/cli
         run: |
-          RELEASE_JSON=$(curl -s https://github.com)
-          VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name' | sed 's/^v//')
-          
-          RPM_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | endswith("linux_amd64.rpm")) | .browser_download_url')
-          RPM_NAME=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | endswith("linux_amd64.rpm")) | .name')
-          
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "rpm_url=$RPM_URL" >> $GITHUB_OUTPUT
-          echo "rpm_name=$RPM_NAME" >> $GITHUB_OUTPUT
+          set -euo pipefail
+
+          api_url="https://api.github.com/repos/${SUPABASE_REPO}/releases/latest"
+          echo "Fetching latest release from $api_url"
+
+          # Use auth and accept header to get JSON; fail on HTTP errors
+          RELEASE_JSON=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "$api_url")
+
+          # Extract tag (strip leading 'v'), and find rpm asset matching linux amd64
+          VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
+          RPM_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name | test("linux(_|\\-)?amd64.*\\.rpm$"; "i")) | .browser_download_url' | head -n1 || true)
+          RPM_NAME=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name | test("linux(_|\\-)?amd64.*\\.rpm$"; "i")) | .name' | head -n1 || true)
+
+          # Validate we found values
+          if [ -z "$VERSION" ] || [ -z "$RPM_URL" ] || [ -z "$RPM_NAME" ]; then
+            echo "ERROR: Failed to extract release info."
+            echo "Release JSON:"
+            echo "$RELEASE_JSON"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "rpm_url=$RPM_URL" >> "$GITHUB_OUTPUT"
+          echo "rpm_name=$RPM_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Execute Shell Builder Script
         run: |
@@ -53,4 +74,3 @@ jobs:
 
       - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4
-
