@@ -101,8 +101,12 @@ cat <<HTML_EOF > public/index.html
                 <dd><code>${DOMAIN}</code></dd>
                 <dt>Default project URL</dt>
                 <dd><code>https://jamone19.github.io/supabase-fedora-repo/</code></dd>
+                <dt>DNS status</dt>
+                <dd>Wait for <strong>DNS check successful</strong>.</dd>
+                <dt>TLS certificate</dt>
+                <dd>GitHub provisions it automatically after the DNS check.</dd>
                 <dt>HTTPS</dt>
-                <dd>Enable <strong>Enforce HTTPS</strong> after GitHub completes DNS verification.</dd>
+                <dd>Enable <strong>Enforce HTTPS</strong> when the checkbox becomes available.</dd>
             </dl>
         </section>
         <section class="config-card">
@@ -121,7 +125,7 @@ cat <<HTML_EOF > public/index.html
             </dl>
         </section>
     </div>
-    <p class="notice"><strong>Important:</strong> Keep the Cloudflare record set to <strong>DNS only</strong>. GitHub must see the underlying CNAME while it verifies and provisions the custom domain.</p>
+    <p class="notice"><strong>HTTPS setup:</strong> Keep the Cloudflare record set to <strong>DNS only</strong>. In GitHub, wait for the custom-domain DNS check and TLS certificate to complete, then enable <strong>Enforce HTTPS</strong> under <strong>Settings → Pages</strong>. Certificate provisioning can continue after the first successful HTTP deployment.</p>
 
     <h2>Installation</h2>
 

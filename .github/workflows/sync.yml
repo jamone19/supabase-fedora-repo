@@ -96,8 +96,8 @@ jobs:
 
       - name: Verify deployed repository file
         env:
-          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
-          CUSTOM_REPO_URL: https://supabase-fedora-repo.interhosting.us/supabase.repo
+          CUSTOM_DOMAIN: supabase-fedora-repo.interhosting.us
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -141,23 +141,54 @@ jobs:
             echo "${label} verification passed."
           }
 
-          default_repo_url="${PAGE_URL%/}/supabase.repo"
-
-          # Verify the Pages deployment directly.
+          # HTTP becomes available as soon as the custom domain and DNS CNAME are
+          # connected, even while GitHub is still provisioning the TLS certificate.
           validate_repo_url \
-            "github-pages" \
-            "${default_repo_url}?deployment=${GITHUB_SHA}" \
-            "curl/GitHub-Actions"
-
-          # Verify the exact public URL using a DNF-like non-browser user agent.
-          # This catches custom-domain redirects, CDN cache issues, and bot/WAF rules.
-          validate_repo_url \
-            "custom-domain" \
-            "${CUSTOM_REPO_URL}?deployment=${GITHUB_SHA}" \
+            "custom-domain-http" \
+            "http://${CUSTOM_DOMAIN}/supabase.repo?deployment=${GITHUB_SHA}" \
             "libdnf5 (Fedora Linux; x86_64)"
 
-          # Also verify the normal unversioned URL that users copy from the homepage.
-          validate_repo_url \
-            "custom-domain-unversioned" \
-            "${CUSTOM_REPO_URL}" \
-            "libdnf5 (Fedora Linux; x86_64)"
+          # Read GitHub's certificate state. A pending certificate should not turn an
+          # otherwise successful Pages deployment red.
+          pages_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/pages"
+          pages_json="/tmp/github-pages.json"
+
+          if curl --location --fail --silent --show-error \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "${pages_api}" > "${pages_json}"; then
+            configured_cname=$(jq -r '.cname // empty' "${pages_json}")
+            certificate_state=$(jq -r '.https_certificate.state // "pending"' "${pages_json}")
+            certificate_description=$(jq -r '.https_certificate.description // "Certificate is being provisioned"' "${pages_json}")
+            https_enforced=$(jq -r '.https_enforced // false' "${pages_json}")
+
+            echo "GitHub Pages custom domain: ${configured_cname:-not configured}"
+            echo "GitHub Pages certificate: ${certificate_state} — ${certificate_description}"
+            echo "GitHub Pages HTTPS enforced: ${https_enforced}"
+
+            if [ "${configured_cname}" != "${CUSTOM_DOMAIN}" ]; then
+              echo "ERROR: Settings → Pages must use custom domain ${CUSTOM_DOMAIN}." >&2
+              exit 1
+            fi
+
+            if [ "${certificate_state}" = "approved" ]; then
+              validate_repo_url \
+                "custom-domain-https" \
+                "https://${CUSTOM_DOMAIN}/supabase.repo?deployment=${GITHUB_SHA}" \
+                "libdnf5 (Fedora Linux; x86_64)"
+
+              validate_repo_url \
+                "custom-domain-https-unversioned" \
+                "https://${CUSTOM_DOMAIN}/supabase.repo" \
+                "libdnf5 (Fedora Linux; x86_64)"
+
+              if [ "${https_enforced}" != "true" ]; then
+                echo "::warning::The certificate is approved. Enable Enforce HTTPS under Settings → Pages."
+              fi
+            else
+              echo "::warning::GitHub Pages has not approved the TLS certificate yet (${certificate_state}). The deployment is valid over HTTP; wait for certificate provisioning, then enable Enforce HTTPS under Settings → Pages."
+            fi
+          else
+            echo "::warning::Could not read the GitHub Pages certificate state. The generated artifact and custom-domain HTTP checks passed, so deployment will not fail solely because HTTPS provisioning is pending."
+          fi
