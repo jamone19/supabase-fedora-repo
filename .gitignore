@@ -1,0 +1,3 @@
+# Keep repository lightweight
+x86_64/*.rpm
+.repo-cache/
