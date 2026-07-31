@@ -2,33 +2,40 @@ name: Sync Supabase CLI RPMs
 
 on:
   schedule:
-    - cron: '0 2 * * *' # Runs daily at 02:00 UTC
-  workflow_dispatch: # Allows manual trigger
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   build-repo:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-    # CRITICAL FIX: Explicitly grant token generation permissions to the execution runner
     permissions:
       contents: read
-      pages: write      # Grants permission to modify GitHub Pages configurations
-      id-token: write   # Grants permission to mint secure OIDC tokens for validation
+      pages: write
+      id-token: write
 
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4.2.2
-        with:
-          fetch-depth: 0
 
-      - name: Install Repo Tools
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install repository tools
         run: |
           sudo apt-get update
           sudo apt-get install -y createrepo-c wget jq
 
-      - name: Fetch Latest Supabase CLI Release Info
+      - name: Fetch latest Supabase CLI release
         id: get_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,40 +44,80 @@ jobs:
           set -euo pipefail
 
           api_url="https://api.github.com/repos/${SUPABASE_REPO}/releases/latest"
-          echo "Fetching latest release from $api_url"
+          echo "Fetching latest release from ${api_url}"
 
-          # Use auth and accept header to get JSON; fail on HTTP errors
-          RELEASE_JSON=$(curl -fsSL \
+          release_json=$(curl -fsSL \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            "$api_url")
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "${api_url}")
 
-          # Extract tag (strip leading 'v'), and find rpm asset matching linux amd64
-          VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
-          RPM_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name | test("linux(_|\\-)?amd64.*\\.rpm$"; "i")) | .browser_download_url' | head -n1 || true)
-          RPM_NAME=$(echo "$RELEASE_JSON" | jq -r '.assets[]? | select(.name | test("linux(_|\\-)?amd64.*\\.rpm$"; "i")) | .name' | head -n1 || true)
+          version=$(jq -r '.tag_name // empty' <<<"${release_json}" | sed 's/^v//')
+          rpm_url=$(jq -r '[.assets[]? | select(.name | test("linux(_|-)?amd64.*\\.rpm$"; "i")) | .browser_download_url][0] // empty' <<<"${release_json}")
+          rpm_name=$(jq -r '[.assets[]? | select(.name | test("linux(_|-)?amd64.*\\.rpm$"; "i")) | .name][0] // empty' <<<"${release_json}")
 
-          # Validate we found values
-          if [ -z "$VERSION" ] || [ -z "$RPM_URL" ] || [ -z "$RPM_NAME" ]; then
-            echo "ERROR: Failed to extract release info."
-            echo "Release JSON:"
-            echo "$RELEASE_JSON"
+          if [ -z "${version}" ] || [ -z "${rpm_url}" ] || [ -z "${rpm_name}" ]; then
+            echo "ERROR: Failed to locate the latest Linux AMD64 RPM asset." >&2
+            jq '{tag_name, assets: [.assets[]?.name]}' <<<"${release_json}" >&2
             exit 1
           fi
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "rpm_url=$RPM_URL" >> "$GITHUB_OUTPUT"
-          echo "rpm_name=$RPM_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "rpm_url=${rpm_url}" >> "${GITHUB_OUTPUT}"
+          echo "rpm_name=${rpm_name}" >> "${GITHUB_OUTPUT}"
 
-      - name: Execute Shell Builder Script
+      - name: Build repository artifact
         run: |
-          chmod +x build_repo.sh
-          ./build_repo.sh "${{ steps.get_release.outputs.version }}" "${{ steps.get_release.outputs.rpm_name }}" "${{ steps.get_release.outputs.rpm_url }}"
+          ./build_repo.sh \
+            "${{ steps.get_release.outputs.version }}" \
+            "${{ steps.get_release.outputs.rpm_name }}" \
+            "${{ steps.get_release.outputs.rpm_url }}"
 
-      - name: Upload Finished Distribution Directory
+      - name: Validate generated repository
+        run: |
+          set -euo pipefail
+
+          test -f public/supabase.repo
+          test "$(sed -n '1p' public/supabase.repo)" = "[supabase]"
+          grep -Fqx 'baseurl=https://supabase-repo.interhosting.us/x86_64/' public/supabase.repo
+          ! grep -Eiq '<!doctype|<html|<body' public/supabase.repo
+          test -f public/x86_64/repodata/repomd.xml
+
+          echo "Generated supabase.repo:"
+          cat public/supabase.repo
+
+      - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './public'
+          path: ./public
 
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify deployed repository file
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+
+          repo_url="${PAGE_URL%/}/supabase.repo"
+          echo "Verifying ${repo_url}"
+
+          for attempt in $(seq 1 10); do
+            if curl -fsSL "${repo_url}" -o /tmp/supabase.repo; then
+              first_line=$(sed -n '1p' /tmp/supabase.repo | tr -d '\r')
+              if [ "${first_line}" = "[supabase]" ] && \
+                 ! grep -Eiq '<!doctype|<html|<body' /tmp/supabase.repo; then
+                echo "Deployment verification passed."
+                cat /tmp/supabase.repo
+                exit 0
+              fi
+            fi
+
+            echo "Deployment is not ready or returned invalid content (attempt ${attempt}/10)."
+            sleep 6
+          done
+
+          echo "ERROR: The deployed supabase.repo is not a valid repository file." >&2
+          sed -n '1,30p' /tmp/supabase.repo 2>/dev/null >&2 || true
+          exit 1

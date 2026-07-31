@@ -1,42 +1,91 @@
 # Supabase CLI Fedora RPM Repository
 
-This repository automatically tracks the official Supabase CLI releases, builds DNF/YUM repository metadata, and hosts everything via your custom subdomain.
+This project tracks the latest official Supabase CLI RPM release, generates DNF/YUM repository metadata, and deploys the finished repository to GitHub Pages at:
 
-## Installation Client Setup
+`https://supabase-repo.interhosting.us`
+
+## Install Supabase CLI
+
+### DNF5 — current Fedora releases
+
 ```bash
-sudo tee /etc/yum.repos.d/supabase.repo << 'EOF'
-[supabase]
-name=Supabase CLI Repository
-baseurl=https://interhosting.us
-enabled=1
-gpgcheck=0
-EOF
+sudo dnf config-manager addrepo --from-repofile=https://supabase-repo.interhosting.us/supabase.repo
+sudo dnf install supabase -y
+```
+
+### DNF4 — older Fedora/RHEL releases
+
+```bash
+sudo dnf config-manager -- --add-repo https://supabase-repo.interhosting.us/supabase.repo
+sudo dnf install supabase -y
+```
+
+### Manual fallback
+
+Use this when `config-manager` is unavailable:
+
+```bash
+curl -fsSL https://supabase-repo.interhosting.us/supabase.repo \
+  | sudo tee /etc/yum.repos.d/supabase.repo >/dev/null
 
 sudo dnf install supabase -y
 ```
 
----
+The downloaded file must begin with a repository section header:
 
-### 🚀 Step-by-Step Deployment Guide
+```ini
+[supabase]
+name=Supabase CLI Repository
+baseurl=https://supabase-repo.interhosting.us/x86_64/
+enabled=1
+type=rpm-md
+gpgcheck=0
+repo_gpgcheck=0
+```
 
-Follow these mechanical steps to bind this repository configuration to your live subdomain:
+You can verify the live response before adding it:
 
-1. **Create the GitHub Repo:** Create a blank, **Public** repository on GitHub. Push the code files provided above directly to your `main` branch.
-2. **Authorize GitHub Action Permissions:** 
-   * Navigate to your repo's **Settings** -> **Actions** -> **General**.
-   * Scroll to *Workflow permissions* and switch it to **Read and write permissions**. Click **Save**.
-3. **Trigger Your First Build:** Go to the **Actions** tab inside GitHub, select the *Sync Supabase CLI RPMs* workflow, and click **Run workflow**. This will populate your repository's backend data and automatically generate a new remote branch named `gh-pages`.
-4. **Link GitHub Pages to the Build Branch:**
-   * Go to **Settings** -> **Pages**.
-   * Under *Build and deployment*, change the source to **Deploy from a branch**.
-   * Select **`gh-pages`** as your source target and click **Save**.
-5. **Attach Your DNS Subdomain:**
-   * On that same **Pages** menu, locate the **Custom Domain** input box.
-   * Input your custom address (e.g., `supabase-fedora-repo.interhosting.us`) and click **Save**.
-6. **Configure DNS Records:** Log into your primary DNS management dashboard (e.g., Cloudflare, Route53, Namecheap) and issue an authoritative steering record:
-   * **Type:** `CNAME`
-   * **Host/Name:** `supabase-fedora-repo` *(or your preferred prefix)*
-   * **Value/Target:** `<YOUR-GITHUB-USERNAME>.github.io`
-   * **TTL:** `Auto` or `3600`
+```bash
+curl -fsSL https://supabase-repo.interhosting.us/supabase.repo | sed -n '1,10p'
+```
 
+The first line must be `[supabase]`. HTML, a 404 page, or any other first line means the custom domain is not serving the generated GitHub Pages artifact.
 
+## Deployment setup
+
+1. Create a public GitHub repository and push these files to its `main` branch.
+2. Open **Settings → Pages**.
+3. Under **Build and deployment**, set **Source** to **GitHub Actions**. This workflow does not create or use a `gh-pages` branch.
+4. Under **Custom domain**, enter `supabase-repo.interhosting.us`.
+5. Configure DNS with a CNAME record:
+   - **Name:** `supabase-repo`
+   - **Target:** `<YOUR-GITHUB-USERNAME>.github.io`
+6. Open **Actions → Sync Supabase CLI RPMs → Run workflow**.
+
+The workflow downloads the latest official RPM, generates `repodata`, validates `supabase.repo`, uploads the `public` directory as a Pages artifact, deploys it, and then verifies that the deployed `.repo` file begins with `[supabase]`.
+
+## Repository layout
+
+```text
+.github/workflows/sync.yml  GitHub Actions synchronization and Pages deployment
+build_repo.sh               RPM download, metadata generation, and site build
+CNAME                       GitHub Pages custom domain
+README.md                   Installation and deployment documentation
+```
+
+## Troubleshooting an invalid repo file
+
+If DNF reports `Missing section header on line 1`, inspect the URL directly:
+
+```bash
+curl -fsSL https://supabase-repo.interhosting.us/supabase.repo -o /tmp/supabase.repo
+sed -n '1,10p' /tmp/supabase.repo
+```
+
+The first line must be `[supabase]`. After deploying this revision, remove any invalid local copy before retrying:
+
+```bash
+sudo rm -f /etc/yum.repos.d/supabase.repo
+sudo dnf config-manager addrepo \
+  --from-repofile=https://supabase-repo.interhosting.us/supabase.repo
+```
