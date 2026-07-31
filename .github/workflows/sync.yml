@@ -11,9 +11,9 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
-      contents: write
-      pages: write
-      id-token: write
+      contents: read
+      pages: write      # Required to write onto GitHub Pages
+      id-token: write   # Required for secure OIDC token verification
 
     steps:
       - name: Checkout Code
@@ -44,18 +44,11 @@ jobs:
           chmod +x build_repo.sh
           ./build_repo.sh "${{ steps.get_release.outputs.version }}" "${{ steps.get_release.outputs.rpm_name }}" "${{ steps.get_release.outputs.rpm_url }}"
 
-      - name: Commit and Push to Deploy Branch
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@://github.com"
-          
-          git checkout -B gh-pages
-          git add x86_64/ supabase.repo CNAME index.html
-          
-          if git diff --cached --quiet; then
-            echo "No repository configuration changes detected."
-          else
-            git commit -m "Automated update: Sync Supabase CLI v${{ steps.get_release.outputs.version }} and rebuild docs"
-            git push origin gh-pages --force
-          fi
+      - name: Upload Finished Distribution Directory
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './public' # Safely bundles our new dedicated build artifact folder
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
 

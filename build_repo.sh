@@ -1,32 +1,33 @@
 #!/bin/bash
 set -e
 
-# Establish variables passed from the workflow env
 VERSION=$1
 RPM_NAME=$2
 RPM_URL=$3
 
-mkdir -p x86_64
+# Build out an isolated deployment target directory
+mkdir -p public/x86_64
 DOMAIN=$(cat CNAME)
 
-# Download package if it doesn't exist locally
-if [ ! -f "x86_64/${RPM_NAME}" ]; then
-  echo "Downloading new version: ${VERSION}"
-  wget -q "${RPM_URL}" -O "x86_64/${RPM_NAME}"
-fi
+# Copy configuration domain tag straight into build target
+cp CNAME public/CNAME
 
-# 1. Generate local repository profile file
-echo "[supabase]" > supabase.repo
-echo "name=Supabase CLI Repository" >> supabase.repo
-echo "baseurl=https://${DOMAIN}/x86_64/" >> supabase.repo
-echo "enabled=1" >> supabase.repo
-echo "gpgcheck=0" >> supabase.repo
+# Fetch package asset cleanly into our structured directory
+echo "Downloading target version binary: ${VERSION}"
+wget -q "${RPM_URL}" -O "public/x86_64/${RPM_NAME}"
 
-# 2. Compile indexes
-createrepo_c x86_64/
+# 1. Map production configuration profile into target output
+echo "[supabase]" > public/supabase.repo
+echo "name=Supabase CLI Repository" >> public/supabase.repo
+echo "baseurl=https://${DOMAIN}/x86_64/" >> public/supabase.repo
+echo "enabled=1" >> public/supabase.repo
+echo "gpgcheck=0" >> public/supabase.repo
 
-# 3. Generate HTML document stream 
-cat <<EOF > index.html
+# 2. Compile target architecture metadata indexing binaries
+createrepo_c public/x86_64/
+
+# 3. Create static HTML user installation manual page 
+cat <<EOF > public/index.html
 <!DOCTYPE html>
 <html lang="en">
 <head>
