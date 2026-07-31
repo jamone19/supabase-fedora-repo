@@ -51,37 +51,17 @@ The first line must be `[supabase]`.
 2. Open **Settings → Pages**.
 3. Under **Build and deployment**, set **Source** to **GitHub Actions**. This workflow does not create or use a `gh-pages` branch.
 4. Under **Custom domain**, enter `supabase-fedora-repo.interhosting.us` and click **Save**.
-5. Configure Cloudflare DNS with this exact record:
+5. In Cloudflare DNS, configure this record:
    - **Type:** `CNAME`
    - **Name:** `supabase-fedora-repo`
    - **Target:** `jamone19.github.io`
-   - **Proxy status:** **DNS only** (gray cloud)
-   - **TTL:** `Auto`
-6. Wait for **DNS check successful** in GitHub Pages, then enable **Enforce HTTPS** when it becomes available.
-7. Open **Actions → Sync Supabase CLI RPMs → Run workflow**.
+   - **Proxy status:** **DNS only** — gray cloud
+   - **TTL:** Auto
+6. Return to **Settings → Pages** and wait for **DNS check successful**. GitHub then requests and installs a TLS certificate for the custom domain.
+7. When the option becomes available, enable **Enforce HTTPS**.
+8. Open **Actions → Sync Supabase CLI RPMs → Run workflow**.
 
-Because this project publishes through a custom GitHub Actions workflow, GitHub Pages ignores a repository `CNAME` file for domain assignment. The hostname must be entered under **Settings → Pages → Custom domain**. The checked-in `CNAME` file in this repository is used only by `build_repo.sh` as the canonical hostname for generated URLs.
-
-To verify the Cloudflare record after saving it as DNS only:
-
-```bash
-dig supabase-fedora-repo.interhosting.us CNAME +short
-```
-
-Expected output:
-
-```text
-jamone19.github.io.
-```
-
-If your local resolver still returns no answer, bypass its negative cache:
-
-```bash
-dig @1.1.1.1 supabase-fedora-repo.interhosting.us CNAME +short
-dig @rafe.ns.cloudflare.com supabase-fedora-repo.interhosting.us CNAME +short
-```
-
-The workflow downloads the latest official RPM, generates `repodata`, validates `supabase.repo`, uploads the `public` directory as a Pages artifact, and deploys it. It then tests both the GitHub Pages deployment URL and the exact custom-domain URL with a DNF-like user agent.
+The workflow downloads the latest official RPM, generates `repodata`, validates `supabase.repo`, uploads the `public` directory as a Pages artifact, and deploys it. It verifies the custom-domain HTTP URL. While GitHub is provisioning the certificate, HTTPS is reported as a warning rather than incorrectly marking the deployment as failed. Once GitHub reports the certificate as approved, HTTPS verification becomes strict automatically.
 
 ## Repository layout
 
@@ -89,9 +69,33 @@ The workflow downloads the latest official RPM, generates `repodata`, validates 
 .github/workflows/sync.yml  GitHub Actions synchronization and Pages deployment
 build_repo.sh               RPM download, metadata generation, and site build
 supabase.repo               Exact DNF/YUM repository definition deployed by the workflow
-CNAME                       Canonical hostname consumed by build_repo.sh
+CNAME                       Domain value used by the site build (Pages is configured in Settings)
 README.md                   Installation and deployment documentation
 ```
+
+## HTTPS certificate provisioning
+
+A Pages deployment can finish before GitHub has issued the certificate for a newly configured custom domain. During that window, HTTP may work while HTTPS fails with:
+
+```text
+SSL: no alternative certificate subject name matches target host name
+```
+
+That message means GitHub's current certificate does not yet include `supabase-fedora-repo.interhosting.us`; it does not mean the RPM repository artifact failed to deploy.
+
+Keep the Cloudflare record on **DNS only**, confirm the exact domain under **Settings → Pages**, wait for the DNS check and certificate to complete, and then enable **Enforce HTTPS**.
+
+Inspect GitHub's current Pages state with:
+
+```bash
+curl -fsSL \
+  -H 'Accept: application/vnd.github+json' \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  https://api.github.com/repos/jamone19/supabase-fedora-repo/pages \
+  | jq '{cname, protected_domain_state, https_certificate, https_enforced}'
+```
+
+The desired values are an approved certificate and HTTPS enforcement enabled.
 
 ## Troubleshooting an invalid repo response
 
