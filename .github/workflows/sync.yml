@@ -48,14 +48,12 @@ jobs:
             wget -q "${{ steps.get_release.outputs.rpm_url }}" -O "x86_64/${{ steps.get_release.outputs.rpm_name }}"
           fi
 
-          # 1. Generate local repo configuration file
-          cat <<EOF > supabase.repo
-[supabase]
-name=Supabase CLI Repository
-baseurl=https://${DOMAIN}/x86_64/
-enabled=1
-gpgcheck=0
-EOF
+          # 1. Generate local repo configuration file safely (using echo to dodge YAML parser quirks)
+          echo "[supabase]" > supabase.repo
+          echo "name=Supabase CLI Repository" >> supabase.repo
+          echo "baseurl=https://${DOMAIN}/x86_64/" >> supabase.repo
+          echo "enabled=1" >> supabase.repo
+          echo "gpgcheck=0" >> supabase.repo
 
           # 2. Build modern createrepo_c indexes
           createrepo_c x86_64/
