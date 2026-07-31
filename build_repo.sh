@@ -59,15 +59,7 @@ fi
 # Generate RPM repository metadata.
 createrepo_c public/x86_64/
 
-<<<<<<< HEAD
 # Create the static installation page.
-=======
-<<<<<<< HEAD
-# Create the static installation page.
-=======
-# 3. Create static HTML user installation manual page 
->>>>>>> d625c712861fea177fe5375729ec5d0112c20bd1
->>>>>>> f62b9a25166c65474b4577f219647963212f57b3
 cat <<HTML_EOF > public/index.html
 <!DOCTYPE html>
 <html lang="en">
@@ -123,10 +115,3 @@ sudo dnf install supabase -y</code></pre>
 </body>
 </html>
 HTML_EOF
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
-
->>>>>>> d625c712861fea177fe5375729ec5d0112c20bd1
->>>>>>> f62b9a25166c65474b4577f219647963212f57b3
