@@ -27,7 +27,7 @@ jobs:
       - name: Fetch Latest Supabase CLI Release Info
         id: get_release
         run: |
-          RELEASE_JSON=$(curl -s https://github.com)
+          RELEASE_JSON=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest)
           VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name' | sed 's/^v//')
           
           RPM_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | endswith("linux_amd64.rpm")) | .browser_download_url')
@@ -37,81 +37,15 @@ jobs:
           echo "rpm_url=$RPM_URL" >> $GITHUB_OUTPUT
           echo "rpm_name=$RPM_NAME" >> $GITHUB_OUTPUT
 
-      - name: Download RPM and Rebuild Index
+      - name: Execute Shell Builder Script
         run: |
-          mkdir -p x86_64
-          DOMAIN=$(cat CNAME)
-          
-          # Download if new version exists
-          if [ ! -f "x86_64/${{ steps.get_release.outputs.rpm_name }}" ]; then
-            echo "Downloading new version: ${{ steps.get_release.outputs.version }}"
-            wget -q "${{ steps.get_release.outputs.rpm_url }}" -O "x86_64/${{ steps.get_release.outputs.rpm_name }}"
-          fi
-
-          # 1. Generate local repo configuration file safely (using echo to dodge YAML parser quirks)
-          echo "[supabase]" > supabase.repo
-          echo "name=Supabase CLI Repository" >> supabase.repo
-          echo "baseurl=https://${DOMAIN}/x86_64/" >> supabase.repo
-          echo "enabled=1" >> supabase.repo
-          echo "gpgcheck=0" >> supabase.repo
-
-          # 2. Build modern createrepo_c indexes
-          createrepo_c x86_64/
-
-          # 3. Generate flat HTML documentation page dynamically
-          cat <<EOF > index.html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Supabase CLI Fedora RPM Repository</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 700px; margin: 40px auto; padding: 0 20px; color: #24292e; background-color: #fafbfc; }
-        h1 { border-bottom: 1px solid #e1e4e8; padding-bottom: 10px; color: #1a1a1a; }
-        code { background-color: #f1f2f4; padding: 3px 6px; font-family: sfmono-regular, consolas, liberation mono, menlo, monospace; font-size: 85%; border-radius: 3px; color: #d73a49; }
-        pre { background: #f6f8fa; padding: 16px; overflow: auto; font-size: 85%; line-height: 1.45; border-radius: 6px; border: 1px solid #e1e4e8; }
-        pre code { background: none; padding: 0; color: #24292e; font-size: 100%; }
-        .version-badge { display: inline-block; background-color: #34d399; color: #064e3b; padding: 2px 8px; font-weight: bold; border-radius: 20px; font-size: 0.8rem; margin-bottom: 10px; }
-    </style>
-</head>
-<body>
-    <h1>Supabase CLI Custom RPM Repository</h1>
-    <div class="version-badge">Latest Synced: v${{ steps.get_release.outputs.version }}</div>
-    <p>This repository provides native Fedora/RHEL/CentOS RPM package hosting for the official Supabase CLI tool, synchronized daily.</p>
-    
-    <h2>Installation Instructions</h2>
-    <p>Run the following command to download your system's <code>.repo</code> configuration mapping file and immediately install the package:</p>
-    
-    <pre><code># 1. Fetch and install the repository config file
-sudo dnf config-manager --add-repo https://${DOMAIN}/supabase.repo
-
-# 2. Install the Supabase CLI package
-sudo dnf install supabase -y</code></pre>
-
-    <p><em>Note: If you run an older version of Fedora or RHEL missing dnf config-manager, use this alternative single command block instead:</em></p>
-    
-    <pre><code>sudo tee /etc/yum.repos.d/supabase.repo &lt;&lt; 'EOF'
-[supabase]
-name=Supabase CLI Repository
-baseurl=https://${DOMAIN}/x86_64/
-enabled=1
-gpgcheck=0
-EOF
-
-sudo dnf install supabase -y</code></pre>
-
-    <p style="margin-top: 40px; font-size: 0.85em; color: #586069; border-top: 1px solid #e1e4e8; padding-top: 20px;">
-        Automated sync script managed via GitHub Actions. Maintainer updates are pushed directly to this domain.
-    </p>
-</body>
-</html>
-EOF
+          chmod +x build_repo.sh
+          ./build_repo.sh "${{ steps.get_release.outputs.version }}" "${{ steps.get_release.outputs.rpm_name }}" "${{ steps.get_release.outputs.rpm_url }}"
 
       - name: Commit and Push to Deploy Branch
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
           git checkout -B gh-pages
           git add x86_64/ supabase.repo CNAME index.html
