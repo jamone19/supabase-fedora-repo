@@ -27,7 +27,7 @@ echo "gpgcheck=0" >> public/supabase.repo
 createrepo_c public/x86_64/
 
 # 3. Create static HTML user installation manual page 
-cat <<EOF > public/index.html
+cat <<HTML_EOF > public/index.html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -74,5 +74,5 @@ sudo dnf install supabase -y</code></pre>
     </p>
 </body>
 </html>
-EOF
+HTML_EOF
 
