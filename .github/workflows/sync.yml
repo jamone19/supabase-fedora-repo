@@ -78,7 +78,7 @@ jobs:
 
           test -f public/supabase.repo
           test "$(sed -n '1p' public/supabase.repo)" = "[supabase]"
-          grep -Fqx 'baseurl=https://supabase-repo.interhosting.us/x86_64/' public/supabase.repo
+          grep -Fqx 'baseurl=https://supabase-fedora-repo.interhosting.us/x86_64/' public/supabase.repo
           ! grep -Eiq '<!doctype|<html|<body' public/supabase.repo
           test -f public/x86_64/repodata/repomd.xml
 
@@ -86,7 +86,7 @@ jobs:
           cat public/supabase.repo
 
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: ./public
 
@@ -97,27 +97,67 @@ jobs:
       - name: Verify deployed repository file
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          CUSTOM_REPO_URL: https://supabase-fedora-repo.interhosting.us/supabase.repo
         run: |
           set -euo pipefail
 
-          repo_url="${PAGE_URL%/}/supabase.repo"
-          echo "Verifying ${repo_url}"
+          validate_repo_url() {
+            local label="$1"
+            local url="$2"
+            local user_agent="$3"
+            local body="/tmp/${label}.repo"
+            local headers="/tmp/${label}.headers"
+            local metadata="/tmp/${label}.metadata"
 
-          for attempt in $(seq 1 10); do
-            if curl -fsSL "${repo_url}" -o /tmp/supabase.repo; then
-              first_line=$(sed -n '1p' /tmp/supabase.repo | tr -d '\r')
-              if [ "${first_line}" = "[supabase]" ] && \
-                 ! grep -Eiq '<!doctype|<html|<body' /tmp/supabase.repo; then
-                echo "Deployment verification passed."
-                cat /tmp/supabase.repo
-                exit 0
-              fi
+            echo "Verifying ${url} (${label})"
+
+            if ! curl --location --fail --silent --show-error \
+              --user-agent "${user_agent}" \
+              --dump-header "${headers}" \
+              --output "${body}" \
+              --write-out 'status=%{http_code}\neffective_url=%{url_effective}\ncontent_type=%{content_type}\nsize=%{size_download}\n' \
+              "${url}" > "${metadata}"; then
+              echo "ERROR: Unable to download ${url}." >&2
+              cat "${headers}" >&2 2>/dev/null || true
+              cat "${metadata}" >&2 2>/dev/null || true
+              return 1
             fi
 
-            echo "Deployment is not ready or returned invalid content (attempt ${attempt}/10)."
-            sleep 6
-          done
+            cat "${metadata}"
 
-          echo "ERROR: The deployed supabase.repo is not a valid repository file." >&2
-          sed -n '1,30p' /tmp/supabase.repo 2>/dev/null >&2 || true
-          exit 1
+            local first_line
+            first_line=$(sed -n '1p' "${body}" | tr -d '\r')
+            if [ "${first_line}" != "[supabase]" ] || \
+               grep -Eiq '<!doctype|<html|<body' "${body}"; then
+              echo "ERROR: ${url} did not return the repository file." >&2
+              echo "Response headers:" >&2
+              sed -n '1,30p' "${headers}" >&2
+              echo "Response body (${body}):" >&2
+              sed -n '1,30p' "${body}" >&2
+              return 1
+            fi
+
+            grep -Fqx 'baseurl=https://supabase-fedora-repo.interhosting.us/x86_64/' "${body}"
+            echo "${label} verification passed."
+          }
+
+          default_repo_url="${PAGE_URL%/}/supabase.repo"
+
+          # Verify the Pages deployment directly.
+          validate_repo_url \
+            "github-pages" \
+            "${default_repo_url}?deployment=${GITHUB_SHA}" \
+            "curl/GitHub-Actions"
+
+          # Verify the exact public URL using a DNF-like non-browser user agent.
+          # This catches custom-domain redirects, CDN cache issues, and bot/WAF rules.
+          validate_repo_url \
+            "custom-domain" \
+            "${CUSTOM_REPO_URL}?deployment=${GITHUB_SHA}" \
+            "libdnf5 (Fedora Linux; x86_64)"
+
+          # Also verify the normal unversioned URL that users copy from the homepage.
+          validate_repo_url \
+            "custom-domain-unversioned" \
+            "${CUSTOM_REPO_URL}" \
+            "libdnf5 (Fedora Linux; x86_64)"
